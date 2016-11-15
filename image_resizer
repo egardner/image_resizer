@@ -1,0 +1,190 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# STDLIB
+require 'fileutils'
+require 'find'
+require 'optparse'
+require 'pathname'
+
+# RUBYGEMS
+require 'rmagick'
+require 'dzt'
+
+# ImageResizer
+#
+# Generates a variety of output files from a folder of source images, including
+# large and small images as well as a set of tiles for deep-zoom viewing. A YAML
+# data file with pixel dimensions for each view will also be generated.
+#
+# This application expects images to be provided in the following format:
+#
+# {number}__{face}.tif or {number}__{face}__{modifier}.tif
+# By default the faces we are looking for are main, top, bottom, and profile
+#
+module ImageResizer
+  MAX_CAT_NUMBER    = 631
+  MAIN_IMAGE_WIDTH  = 2000
+  THUMB_IMAGE_WIDTH = 500
+  FACES             = [:main, :profile, :top, :bottom].freeze
+
+  # Custom error class
+  class MissingDirectoryError < ArgumentError
+    def message
+      <<~MSG
+        Input and output cannot be blank.
+        Run image_resizer.rb --help for usage instructions.
+      MSG
+    end
+  end
+
+  # Custom error class
+  class InvalidDirectoryError < ArgumentError
+    def message
+      <<~MSG
+        Please provide a valid input and output directory.
+        Run image_resizer.rb --help for usage instructions.
+      MSG
+    end
+  end
+
+  # App
+  #
+  # Handle input from user (input/output dirs). Loop through a collection of
+  # files and instantiate Artifact objects. Also responsible for managing
+  # directories and navigating the filesystem.
+  #
+  class App
+    def initialize(args={})
+      @input = Pathname.new(args[:input])
+      @output = Pathname.new(args[:output])
+      @artifacts = []
+
+      prepare_directories
+      prepare_images
+      write_files
+    end
+
+    private
+
+    def prepare_images
+      puts 'Preparing images.'
+      (1..MAX_CAT_NUMBER).each do |n|
+        # Instantiate new Artifact objects here
+        images = Find.find(@input).grep(/^#{@input}\/#{n}__/i)
+        @artifacts << Artifact.new(n, images)
+      end
+    end
+
+    def prepare_directories
+      puts 'Preparing Directories.'
+      raise InvalidDirectoryError unless @input.directory?
+
+      unless @output.directory?
+        puts "Creating output directory #{@output}."
+        @output.mkdir
+      end
+
+      prepare_subdirectories
+    end
+
+    def prepare_subdirectories
+      Dir.chdir @output do
+        Dir.mkdir('main') unless Dir.exist?('main')
+        Dir.mkdir('thumbs') unless Dir.exist?('thumbs')
+        Dir.mkdir('tiles') unless Dir.exist?('tiles')
+      end
+    end
+
+    def write_files
+      puts 'Writing files (may take some time).'
+      @artifacts.each do |artifact|
+        Dir.chdir(File.join(@output, 'main')) { artifact.write_main_image }
+        Dir.chdir(File.join(@output, 'thumbs')) { artifact.write_thumb_image }
+        Dir.chdir(File.join(@output, 'tiles')) { artifact.write_tiles }
+      end
+    end
+  end
+
+  # Artifact
+  #
+  # Contains a series of Views (top, bottom, profile, main, etc.) of a given
+  # catalogue item (numbered). Has methods to handle creating derivitave assets
+  # for each View in its collection. This class is the only one that should be
+  # calling image manipulation methods from DZT or RMagick.
+  #
+  class Artifact
+    attr_reader :number
+
+    # Simple data-storage class that stores a face name (main, top, profile)
+    # and a file path to an image, along with image dimensions
+    View = Struct.new(:face, :path, :width, :height)
+
+    # Initialize a new Artifact with a catalogue number and an array of images
+    def initialize(number, images=[])
+      puts "Generating views for cat. #{@number}"
+      @number = number
+      @images = generate_views(images)
+    end
+
+    def write_main_image
+    end
+
+    def write_thumb_image
+    end
+
+    def write_tiles
+    end
+
+    private
+
+    # Use a regular expression to find the 'face' portion of each filename
+    # in the image set, and then create a View object for each one.
+    def generate_views(images)
+      regex = /(?<face>(?<=__)[A-z]+)/i
+      images.map do |i|
+        regex.match(i)
+        face = $LAST_MATCH_INFO['face']
+        path = Pathname.new(i).realpath
+        width, height = image_dimensions(path)
+        View.new(face, path, width, height)
+      end
+    end
+
+    # Use RMagick to get the pixel dimensions of an image.
+    def image_dimensions(image)
+      magick_img = Magick::Image.ping(image).first
+      [magick_img.columns, magick_img.rows]
+    end
+  end
+end
+
+# Command-line Interface
+#
+# Using OptionParser for the simplest possible Ruby CLI right now. User should
+# pass in an input and output path. Input path must already be a directory;
+# output path can be generated if it does not already exist. Some handling of
+# custom error classes as well to print out helpful error messages if invalid
+# arguments are provided by the user.
+#
+options = {}
+
+# rubocop:disable LineLength
+begin
+  OptionParser.new do |parser|
+    parser.banner = 'Usage: image_resizer.rb [options]'
+    parser.on('-h', '--help', 'Show this help message') { puts parser }
+    parser.on('-i', '--input DIR', 'Input directory containing images') { |v| options[:input] = v }
+    parser.on('-o', '--output DIR', 'Location to output new files') { |v| options[:output] = v }
+  end.parse!
+  raise ImageResizer::MissingDirectoryError if options[:input].nil? || options[:output].nil?
+rescue ImageResizer::MissingDirectoryError => e
+  puts e.message
+  exit 0
+rescue ImageResizer::InvalidDirectoryError => e
+  puts e.message
+  exit 0
+end
+# rubocop:enable LineLength
+
+ImageResizer::App.new(options)
