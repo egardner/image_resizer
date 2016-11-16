@@ -32,7 +32,7 @@ module ImageResizer
   class MissingDirectoryError < ArgumentError
     def message
       <<~MSG
-        Input and output cannot be blank.
+        Please provide an input and output directory.
         Run image_resizer.rb --help for usage instructions.
       MSG
     end
@@ -72,6 +72,7 @@ module ImageResizer
       (1..MAX_CAT_NUMBER).each do |n|
         # Instantiate new Artifact objects here
         images = Find.find(@input).grep(/^#{@input}\/#{n}__/i)
+        next if images.empty?
         @artifacts << Artifact.new(n, images)
       end
     end
@@ -99,9 +100,9 @@ module ImageResizer
     def write_files
       puts 'Writing files (may take some time).'
       @artifacts.each do |artifact|
-        Dir.chdir(File.join(@output, 'main')) { artifact.write_main_image }
-        Dir.chdir(File.join(@output, 'thumbs')) { artifact.write_thumb_image }
-        Dir.chdir(File.join(@output, 'tiles')) { artifact.write_tiles }
+        Dir.chdir(File.join(@output, 'main')) { artifact.write_main_image! }
+        Dir.chdir(File.join(@output, 'thumbs')) { artifact.write_thumb_image! }
+        Dir.chdir(File.join(@output, 'tiles')) { artifact.write_tiles! }
       end
     end
   end
@@ -122,18 +123,40 @@ module ImageResizer
 
     # Initialize a new Artifact with a catalogue number and an array of images
     def initialize(number, images=[])
-      puts "Generating views for cat. #{@number}"
+      puts "Generating views for cat. #{number}"
       @number = number
       @images = generate_views(images)
     end
 
-    def write_main_image
+    def write_main_image!
+      puts "Writing main view for cat. #{@number}"
+      main_img = @images.find { |i| i.face == 'main' }
+      unless main_img.nil?
+        magick_img  = Magick::Image.read(main_img.path).first
+        output_name = "#{@number}.jpg"
+
+        magick_img.resize_to_fit!(2000)
+        magick_img.write(File.join(Dir.pwd, output_name))
+        magick_img.destroy!
+      end
     end
 
-    def write_thumb_image
+    def write_thumb_image!
+      puts "Writing thumbnail view for cat. #{@number}"
+      top_img = @images.find { |i| i.face == 'top' }
+
+      unless top_img.nil?
+        magick_img  = Magick::Image.read(top_img.path).first
+        output_name = "#{@number}.jpg"
+
+        magick_img.resize_to_fit!(500)
+        magick_img.write(File.join(Dir.pwd, output_name))
+        magick_img.destroy!
+      end
     end
 
-    def write_tiles
+    def write_tiles!
+      puts "Writing tiles for cat. #{@number}"
     end
 
     private
@@ -154,7 +177,12 @@ module ImageResizer
     # Use RMagick to get the pixel dimensions of an image.
     def image_dimensions(image)
       magick_img = Magick::Image.ping(image).first
-      [magick_img.columns, magick_img.rows]
+      width = magick_img.columns
+      height = magick_img.rows
+
+      magick_img.destroy!
+
+      [width, height]
     end
   end
 end
