@@ -56,6 +56,9 @@ module ImageResizer
   # directories and navigating the filesystem.
   #
   class App
+    attr_reader :input, :output
+    attr_accessor :artifacts
+
     def initialize(args={})
       @input = Pathname.new(args[:input])
       @output = Pathname.new(args[:output])
@@ -63,8 +66,7 @@ module ImageResizer
 
       prepare_directories
       prepare_images
-      # write_files
-      write_manifest
+      write_files
     end
 
     private
@@ -72,50 +74,76 @@ module ImageResizer
     def prepare_images
       puts 'Preparing images.'
       (1..MAX_CAT_NUMBER).each do |n|
+        puts "Generating views for cat. #{n}"
         # Instantiate new Artifact objects here
-        images = Find.find(@input).grep(/^#{@input}\/#{n}__/i)
+        images = Find.find(input).grep(/^#{input}\/#{n}__/i)
         next if images.empty?
-        @artifacts << Artifact.new(n, images)
+        artifacts << Artifact.new(n, images)
       end
     end
 
     def prepare_directories
       puts 'Preparing Directories.'
-      raise InvalidDirectoryError unless @input.directory?
+      raise InvalidDirectoryError unless input.directory?
 
-      unless @output.directory?
-        puts "Creating output directory #{@output}."
-        @output.mkdir
+      unless output.directory?
+        puts "Creating output directory #{output}."
+        output.mkdir
       end
 
       prepare_subdirectories
     end
 
     def prepare_subdirectories
-      Dir.chdir @output do
+      Dir.chdir output do
         Dir.mkdir('main') unless Dir.exist?('main')
         Dir.mkdir('thumbs') unless Dir.exist?('thumbs')
         Dir.mkdir('tiles') unless Dir.exist?('tiles')
       end
     end
 
-    def write_files
-      puts 'Writing files (may take some time).'
-      @artifacts.each do |artifact|
-        Dir.chdir(File.join(@output, 'main')) { artifact.write_main_image! }
-        Dir.chdir(File.join(@output, 'thumbs')) { artifact.write_thumb_image! }
-        Dir.chdir(File.join(@output, 'tiles')) { artifact.write_tiles! }
+    def generate_main_images
+      artifacts.each do |artifact|
+        Dir.chdir(File.join(output, 'main')) do
+          puts "Writing main image for #{artifact.number}"
+          artifact.write_main_image!
+        end
       end
     end
 
+    def generate_thumb_images
+      artifacts.each do |artifact|
+        Dir.chdir(File.join(output, 'thumbs')) do
+          puts "Writing thumbnail image for #{artifact.number}"
+          artifact.write_thumb_image!
+        end
+      end
+    end
+
+    def generate_tiles
+      artifacts.each do |artifact|
+        Dir.chdir(File.join(output, 'tiles')) do
+          puts "Writing image tiles for #{artifact.number}"
+          artifact.write_tiles!
+        end
+      end
+    end
+
+    def write_files
+      # generate_main_images
+      # generate_thumb_images
+      generate_tiles
+      generate_manifest
+    end
+
     # Writing to STDOUT for now; write to a text file instead.
-    def write_manifest
+    def generate_manifest
       data = []
-      @artifacts.each do |artifact|
+      artifacts.each do |artifact|
         data << artifact.manifest_data
       end
 
-      puts data.to_yaml
+      File.open('manifest.yml', 'w') { |f| f.puts data.to_yaml }
     end
   end
 
@@ -135,13 +163,11 @@ module ImageResizer
 
     # Initialize a new Artifact with a catalogue number and an array of images
     def initialize(number, images=[])
-      puts "Generating views for cat. #{number}"
       @number = number
       @images = generate_views(images)
     end
 
     def write_main_image!
-      puts "Writing main view for cat. #{number}"
       main_img = images.find { |i| i.face == 'main' }
       unless main_img.nil?
         magick_img  = Magick::Image.read(main_img.path).first
@@ -154,7 +180,6 @@ module ImageResizer
     end
 
     def write_thumb_image!
-      puts "Writing thumbnail view for cat. #{number}"
       top_img = images.find { |i| i.face == 'top' }
 
       unless top_img.nil?
@@ -168,7 +193,11 @@ module ImageResizer
     end
 
     def write_tiles!
-      puts "Writing tiles for cat. #{number}"
+      images.each do |i|
+        face = i.face
+        path = i.path
+        puts `dzt slice "#{path}" --output='./#{number}/#{face}' --format=jpg --tile-size=256 --overwrite=true`
+      end
     end
 
     # Return a data hash for later YAML serialization.
@@ -203,7 +232,6 @@ module ImageResizer
       magick_img = Magick::Image.ping(image).first
       width = magick_img.columns
       height = magick_img.rows
-
       magick_img.destroy!
 
       [width, height]
