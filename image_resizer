@@ -6,6 +6,7 @@ require 'fileutils'
 require 'find'
 require 'optparse'
 require 'pathname'
+require 'yaml'
 
 # RUBYGEMS
 require 'rmagick'
@@ -62,7 +63,8 @@ module ImageResizer
 
       prepare_directories
       prepare_images
-      write_files
+      # write_files
+      write_manifest
     end
 
     private
@@ -105,6 +107,16 @@ module ImageResizer
         Dir.chdir(File.join(@output, 'tiles')) { artifact.write_tiles! }
       end
     end
+
+    # Writing to STDOUT for now; write to a text file instead.
+    def write_manifest
+      data = []
+      @artifacts.each do |artifact|
+        data << artifact.manifest_data
+      end
+
+      puts data.to_yaml
+    end
   end
 
   # Artifact
@@ -115,7 +127,7 @@ module ImageResizer
   # calling image manipulation methods from DZT or RMagick.
   #
   class Artifact
-    attr_reader :number
+    attr_reader :number, :images
 
     # Simple data-storage class that stores a face name (main, top, profile)
     # and a file path to an image, along with image dimensions
@@ -129,11 +141,11 @@ module ImageResizer
     end
 
     def write_main_image!
-      puts "Writing main view for cat. #{@number}"
-      main_img = @images.find { |i| i.face == 'main' }
+      puts "Writing main view for cat. #{number}"
+      main_img = images.find { |i| i.face == 'main' }
       unless main_img.nil?
         magick_img  = Magick::Image.read(main_img.path).first
-        output_name = "#{@number}.jpg"
+        output_name = "#{number}.jpg"
 
         magick_img.resize_to_fit!(2000)
         magick_img.write(File.join(Dir.pwd, output_name))
@@ -142,12 +154,12 @@ module ImageResizer
     end
 
     def write_thumb_image!
-      puts "Writing thumbnail view for cat. #{@number}"
-      top_img = @images.find { |i| i.face == 'top' }
+      puts "Writing thumbnail view for cat. #{number}"
+      top_img = images.find { |i| i.face == 'top' }
 
       unless top_img.nil?
         magick_img  = Magick::Image.read(top_img.path).first
-        output_name = "#{@number}.jpg"
+        output_name = "#{number}.jpg"
 
         magick_img.resize_to_fit!(500)
         magick_img.write(File.join(Dir.pwd, output_name))
@@ -156,7 +168,19 @@ module ImageResizer
     end
 
     def write_tiles!
-      puts "Writing tiles for cat. #{@number}"
+      puts "Writing tiles for cat. #{number}"
+    end
+
+    # Return a data hash for later YAML serialization.
+    # Fancy map/tap logic is just a way of stripping an unneeded key/value
+    # pair from the hash and returning the resulting hash instead of the
+    # value of the removed key (Hash#delete does the latter).
+    def manifest_data
+      image_data = images.map(&:to_h)
+      {
+        cat: number,
+        images: image_data.map { |h| h.tap { |hs| hs.delete(:path) } }
+      }
     end
 
     private
