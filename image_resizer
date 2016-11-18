@@ -130,8 +130,8 @@ module ImageResizer
     end
 
     def write_files
-      # generate_main_images
-      # generate_thumb_images
+      generate_main_images
+      generate_thumb_images
       generate_tiles
       generate_manifest
     end
